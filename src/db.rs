@@ -52,25 +52,17 @@ impl FromStr for TdeeEntry {
         let mut iter = s.split(',').map(|it| it.trim());
 
         let date = iter.next().ok_or(ParseEntryError::NoDate).and_then(|it| {
-            NaiveDate::parse_from_str(it.trim(), DATETIME_STR).map_err(|e| ParseEntryError::from(e))
+            NaiveDate::parse_from_str(it.trim(), DATETIME_STR).map_err(ParseEntryError::from)
         })?;
 
         let tdee = iter
             .next()
             .ok_or(ParseEntryError::NoCalories)
-            .and_then(|it| {
-                it.trim()
-                    .parse::<u32>()
-                    .map_err(|e| ParseEntryError::from(e))
-            })?;
+            .and_then(|it| it.trim().parse::<u32>().map_err(ParseEntryError::from))?;
 
         let weight = iter
             .next()
-            .map(|it| {
-                it.trim()
-                    .parse::<f32>()
-                    .map_err(|e| ParseEntryError::from(e))
-            })
+            .map(|it| it.trim().parse::<f32>().map_err(ParseEntryError::from))
             .transpose()?;
 
         Ok(Self {
@@ -81,13 +73,13 @@ impl FromStr for TdeeEntry {
     }
 }
 
-impl Into<String> for TdeeEntry {
-    fn into(self) -> String {
+impl From<TdeeEntry> for String {
+    fn from(val: TdeeEntry) -> Self {
         format!(
             "{}, {}{}",
-            self.date.format(DATETIME_STR),
-            self.calories,
-            self.weight
+            val.date.format(DATETIME_STR),
+            val.calories,
+            val.weight
                 .map(|it| format!(", {it}"))
                 .unwrap_or_else(|| "".to_owned())
         )
@@ -100,9 +92,9 @@ pub struct TdeeBlock {
     pub entries: Vec<TdeeEntry>,
 }
 
-impl Into<String> for TdeeBlock {
-    fn into(self) -> String {
-        let entry_str = self
+impl From<TdeeBlock> for String {
+    fn from(val: TdeeBlock) -> Self {
+        let entry_str = val
             .entries
             .into_iter()
             .map(|e| {
@@ -112,7 +104,7 @@ impl Into<String> for TdeeBlock {
             })
             .collect::<String>();
 
-        format!("{}\n{}", self.initial_tdee, entry_str)
+        format!("{}\n{}", val.initial_tdee, entry_str)
     }
 }
 
@@ -152,16 +144,14 @@ impl TdeeDb {
 
         // TODO: this currently just rewrite the whole file on every execution which is pretty bad
         let reader = BufReader::new(file);
-        let mut lines = reader
-            .lines()
-            .map(|line| line.map_err(|e| DbError::from(e)));
+        let mut lines = reader.lines().map(|line| line.map_err(DbError::from));
 
         let mut blocks = vec![];
         while let Some(initial) = lines.next() {
-            let initial = initial.and_then(|it| it.parse::<u32>().map_err(|e| DbError::from(e)))?;
+            let initial = initial.and_then(|it| it.parse::<u32>().map_err(DbError::from))?;
 
             let mut records: Vec<TdeeEntry> = vec![];
-            while let Some(record) = lines.next() {
+            for record in lines.by_ref() {
                 let record = record?;
 
                 if record.trim().is_empty() {
@@ -182,7 +172,7 @@ impl TdeeDb {
         }
 
         Ok(Self {
-            blocks: blocks,
+            blocks,
             path: path.to_path_buf(),
         })
     }
