@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{Local, NaiveDate};
 use clap::*;
-use tede::db::{DATETIME_STR, TdeeDb};
+use tede::db::{DATETIME_STR, TdeeDb, TdeeEntry};
 
 #[derive(Parser)]
 #[command(version, about, author)]
@@ -18,58 +18,91 @@ enum Commands {
     Add {
         /// calorie count for the day
         tdee: u32,
+        /// Weight for the target date
+        weight: Option<f32>,
+        #[arg(short, long)]
         /// when where they consumed
         date: Option<String>,
+        /// specify whether or not the file should be created if it does not exist
+        #[arg(short, long, default_value_t = false)]
+        create: bool,
     },
-    /// Create a new database instance
-    Create { initial_tdee: u32 },
     /// Print all entries of the currently active database
     Print,
 }
 
-fn handle_subcmd(db_path: &Path, subcmd: Commands) {
-    match subcmd {
-        Commands::Create { initial_tdee } => {
-            TdeeDb::create(db_path, initial_tdee).expect("ERROR: failed to create database file");
-        }
-        Commands::Add { tdee, date } => {
-            let mut db = TdeeDb::open(db_path).expect("ERROR: failed to open database file");
+impl Commands {
+    fn run(self, db_path: &Path) {
+        match self {
+            Commands::Add {
+                tdee,
+                date,
+                create,
+                weight,
+            } => {
+                let date = date
+                    .map(|s| NaiveDate::parse_from_str(&s, DATETIME_STR))
+                    .transpose()
+                    .map(|opt| opt.unwrap_or(Local::now().naive_local().date()))
+                    .expect("ERROR: failed to parse provided date");
 
-            let date = date
-                .map(|s| NaiveDate::parse_from_str(&s, DATETIME_STR))
-                .transpose()
-                .map(|opt| opt.unwrap_or(Local::now().naive_local().date()))
-                .expect("ERROR: failed to parse provided date");
+                if create {
+                    let mut db = TdeeDb::new(db_path);
+                    let block = db.new_block(tdee);
+                    block.add_entry(TdeeEntry::new(tdee, weight, date));
 
-            db.add(tdee, date)
-                .expect("ERROR: failed to commit database addition");
-        }
-        Commands::Print => {
-            let db = TdeeDb::open(db_path).expect("ERROR: failed to open database file");
+                    if let Err(e) = db.commit() {
+                        panic!("ERROR: failed to commit changes to local database: {e}");
+                    }
 
-            for (i, entry) in db.entries().enumerate() {
-                print!(
-                    "Entry {}: Calories {}, recorded at {} ",
-                    i,
-                    entry.calories,
-                    entry.date.format(DATETIME_STR).to_string(),
-                );
+                    return;
+                }
 
-                if let Some(weight) = entry.weight {
-                    println!("(weight was {weight} kg)");
-                } else {
-                    println!("(no weight record)");
+                let mut db = match TdeeDb::from_file(db_path) {
+                    Ok(db) => db,
+                    Err(e) => panic!("ERROR: failed to open database file: {}", e),
+                };
+
+                if let Some(block) = db.block() {
+                    block.add_entry(TdeeEntry::new(tdee, weight, date));
+                }
+
+                if let Err(e) = db.commit() {
+                    panic!("ERROR: failed to commit changes to local database: {e}");
                 }
             }
-        }
-    };
+            Commands::Print => {
+                let db = match TdeeDb::from_file(db_path) {
+                    Ok(db) => db,
+                    Err(e) => panic!("ERROR: failed to open database file: {}", e),
+                };
+
+                for (i, block) in db.iter().enumerate() {
+                    println!("Block {} has {} entries", i, block.entries.len());
+
+                    for (j, entry) in block.iter().enumerate() {
+                        print!(
+                            "Entry {j}: calories {}, date is {} ",
+                            entry.calories,
+                            entry.date.format(DATETIME_STR)
+                        );
+                        if let Some(weight) = entry.weight {
+                            println!("(weight was {weight} kg)");
+                        } else {
+                            println!("(no weight record)");
+                        }
+                    }
+                }
+            }
+        };
+    }
 }
 
 fn main() {
     let cli = Cli::parse();
 
     if let Some(subcmd) = cli.subcmd {
-        handle_subcmd(&cli.path, subcmd);
+        subcmd.run(&cli.path);
     } else {
         todo!("interactive not implemented");
     }

@@ -7,3 +7,4 @@ edition = "2024"
 clap = { version = "*", features = [ "derive" ] }
 chrono = "*"
 thiserror = "*"
+tempfile = "*"
